@@ -1,0 +1,32 @@
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "hardware/spi.h"
+#include "LoraPICO.h"
+#include "LoraPICO.c"
+
+// SPI Defines
+// We are going to use SPI 0, and allocate it to the following GPIO pins
+// Pins can be changed, see the GPIO function select table in the datasheet for information on GPIO assignments
+#define SPI_PORT spi1
+#define LORA_DIO 20
+#define LORA_RESET 15
+#define LORA_MISO 12
+#define LORA_MOSI 11
+#define LORA_CLK 10
+#define LORA_CS 3
+#define LORA_BUSY 2
+
+
+int main()
+{
+    stdio_init_all();
+
+    // SPI initialisation. This example will use SPI at 16MHz.
+    lora_init();
+
+    while (true) {
+        printf("Hello, world!\n");
+        sleep_ms(1000);
+    }
+}
+ 
