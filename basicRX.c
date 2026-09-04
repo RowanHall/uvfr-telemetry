@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <strings.h>
 
 #include "pico/multicore.h" //hearbeat core
 #include "pico/stdlib.h"
@@ -57,6 +58,16 @@ void gpio_setup(void)
     spi_init(SPI_PORT, 16 * 1000000);
 }
 
+void cs_low(void)
+{
+    gpio_put(LORA_CS, 0);
+}
+
+void cs_high(void)
+{
+    gpio_put(LORA_CS, 1);
+}
+
 void lora_clear_irq()
 {
     uint8_t data[] = {
@@ -67,17 +78,6 @@ void lora_clear_irq()
     cs_low();
     spi_write_blocking(spi1, data, 3);
     cs_high();
-}
-
-
-void cs_low(void)
-{
-    gpio_put(LORA_CS, 0);
-}
-
-void cs_high(void)
-{
-    gpio_put(LORA_CS, 1);
 }
 
 uint8_t lora_read(uint8_t write)
@@ -102,6 +102,22 @@ void lora_set_dio() // table 8-4, sets DIO1 to RX_DONE, DIO2 to none, DIO3 to no
     cs_high();
 }
 
+void lora_set_freq()
+{
+    uint8_t data[] = {
+        // SetRfFrequency to 915 MHz, to change, see 13.4.1
+        0x86,
+        0x39,
+        0x38,
+        0x00,
+        0x00,
+    };
+
+    cs_low();
+    spi_write_blocking(spi1, data, 5);
+    cs_high();
+}
+
 void lora_set_rx()
 {
     uint8_t data[] = {0x82, 0xFF, 0xFF, 0xFF}; // RX continuous
@@ -109,6 +125,37 @@ void lora_set_rx()
     cs_low();
     spi_write_blocking(spi1, data, 4);
     cs_high();
+}
+
+void lora_get_rx_status(uint8_t *pass) // takes a pointer to a 4 byte array, fills it with the length and offset of the last received packet
+{
+    cs_low();
+    spi_read_blocking(spi1, 0x13, pass, 4);
+    cs_high();
+}
+
+void lora_read_packet(uint8_t length, uint8_t offset) // reads the last received packet, returns it as a string
+{
+    uint8_t ask[3];
+    ask[0] = 0x1E; // ReadBuffer command
+    ask[1] = offset;
+    ask[2] = 0x00; // dummy byte
+
+    uint8_t data[256] = {0}; // buffer to hold the received packet
+
+    cs_low();
+    spi_write_blocking(spi1, ask, 3);
+    spi_read_blocking(spi1, 0x00, data, length);
+    cs_high();
+
+    printf("Received %u bytes: ", length);
+
+    for (uint8_t i = 0; i < length; i++)
+    {
+        printf("%02X ", data[i]);
+    }
+
+    printf("\n");
 }
 
 void heartbeat_core(void)
@@ -130,12 +177,21 @@ int main(void)
 
     sleep_ms(2000);
 
+    uint8_t rx_status_reader[] =
+        {
+            0x00, // dummy    0
+            0x00, // status   1
+            0x00, // length   2
+            0x00  // offset   3
+        };
+
     printf("\nSX1262 receiver\n");
     printf("Frequency: 915 MHz\n");
 
     // lora_init();
     lora_set_rx();
     lora_set_dio();
+    lora_set_freq();
 
     printf("Listening...\n");
 
@@ -145,7 +201,11 @@ int main(void)
         {
             printf("RX_DONE interrupt received!\n");
             rx_done = false;
-            printf("Received data: 0x%02X\n", lora_read(0x00));
+            // find length
+            lora_get_rx_status(rx_status_reader);
+            // read packet
+            lora_read_packet(rx_status_reader[2], rx_status_reader[3]);
+            // clear flags
             lora_clear_irq();
         }
     }
