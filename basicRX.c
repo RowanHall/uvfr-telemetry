@@ -8,6 +8,8 @@
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 
+static const uint8_t LORA_FREQ[5] = {0x86, 0x39, 0x38, 0x00, 0x00};
+
 #define SPI_PORT spi1
 
 #define LORA_DIO1 20
@@ -28,7 +30,7 @@ void dio1_callback(uint gpio, uint32_t events)
     }
 }
 
-void gpio_setup(void)
+void gpio_setup()
 {
     gpio_set_function(LORA_MISO, GPIO_FUNC_SPI);
     gpio_set_function(LORA_MOSI, GPIO_FUNC_SPI);
@@ -36,11 +38,11 @@ void gpio_setup(void)
 
     gpio_init(LORA_CS);
     gpio_set_dir(LORA_CS, GPIO_OUT);
-    gpio_put(LORA_CS, 1);
+    gpio_put(LORA_CS, 0);
 
     gpio_init(LORA_RESET);
     gpio_set_dir(LORA_RESET, GPIO_OUT);
-    gpio_put(LORA_RESET, 1);
+    gpio_put(LORA_RESET, 0);
 
     gpio_init(LORA_BUSY);
     gpio_set_dir(LORA_BUSY, GPIO_IN);
@@ -58,12 +60,12 @@ void gpio_setup(void)
     spi_init(SPI_PORT, 16 * 1000000);
 }
 
-void cs_low(void)
+void cs_low()
 {
     gpio_put(LORA_CS, 0);
 }
 
-void cs_high(void)
+void cs_high()
 {
     gpio_put(LORA_CS, 1);
 }
@@ -104,17 +106,8 @@ void lora_set_dio() // table 8-4, sets DIO1 to RX_DONE, DIO2 to none, DIO3 to no
 
 void lora_set_freq()
 {
-    uint8_t data[] = {
-        // SetRfFrequency to 915 MHz, to change, see 13.4.1
-        0x86,
-        0x39,
-        0x38,
-        0x00,
-        0x00,
-    };
-
     cs_low();
-    spi_write_blocking(spi1, data, 5);
+    spi_write_blocking(spi1, LORA_FREQ, 5);
     cs_high();
 }
 
@@ -167,6 +160,93 @@ void heartbeat_core(void)
     }
 }
 
+void lora_set_packet_type(int type){   // 0 for GFSK, 1 for LoRa
+    uint8_t data[] = {
+        0x8A, // SetPacketType
+        type  
+    };
+    cs_low();
+    spi_write_blocking(spi1, data, 2);
+    cs_high();
+}
+
+void lora_set_buffer_base(uint8_t tx_base, uint8_t rx_base)
+{
+    uint8_t data[] = {
+        0x8F, // SetBufferBaseAddress
+        tx_base,
+        rx_base};
+
+    cs_low();
+    spi_write_blocking(spi1, data, 3);
+    cs_high();
+}
+
+/*
+I think this needs to be the same between the PI and the Pico
+sf can be 5, 6, 7, 8, 9, 10, 11, or 12, lower the faster, higher the more range
+bf found on table 13-48, try between 4-6, 4 is more range, 6 is faster
+cr can be 1-4, error correction, 1 is fastest, 4 is slowest but most reliable
+LowDataRateOptimize - read 6.1.1.4, 0 off 1 on
+*/
+void lora_set_modulation_params(int sf, int bw, int cr, int ldro)
+{
+    uint8_t data[] = {
+        0x8B, // SetModulationParams
+        sf,
+        bw,
+        cr,
+        ldro,
+        0,
+        0,
+        0,
+        0 
+    };
+    cs_low();
+    spi_write_blocking(spi1, data, 9);
+    cs_high();
+}
+
+void lora_set_packet_params()
+{
+    uint8_t data[] = {
+        0x8C, // SetPacketParams
+        0, // preamble length MSB
+        8, // preamble length LSB (set to 8 for now, can be changed later)
+        0, //0 for explicit header, 1 for implicit header
+        0xFF,
+        0, // CRC off
+        0, // invert IQ off
+        0,
+        0,
+        0
+    };
+    cs_low();
+    spi_write_blocking(spi1, data, 10);
+    cs_high();
+}
+
+
+void lora_init()
+{
+    //setstdby Skipped since first boot
+    //setpackettype
+    lora_set_packet_type(1); // LoRa
+    //SetRfFrequency
+    lora_set_freq();
+    //setbufferBase
+    lora_set_buffer_base(0x00, 0x00); // tx base 0, rx base 0
+    //SetModulationParams
+    lora_set_modulation_params(10, 6, 1, 0);
+    //SetPacketParams
+    lora_set_packet_params();
+    //SetDIO
+    lora_set_dio();
+    //WriteReg set sync word? Skipped, already private
+    //SetRX
+    lora_set_rx();
+}
+
 int main(void)
 {
     stdio_init_all();
@@ -189,6 +269,10 @@ int main(void)
     printf("Frequency: 915 MHz\n");
 
     // lora_init();
+
+
+    //wait for msg
+    
     lora_set_rx();
     lora_set_dio();
     lora_set_freq();
