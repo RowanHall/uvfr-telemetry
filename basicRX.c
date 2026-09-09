@@ -268,14 +268,7 @@ int main(void)
     printf("\nSX1262 receiver\n");
     printf("Frequency: 915 MHz\n");
 
-    // lora_init();
-
-
-    //wait for msg
-    
-    lora_set_rx();
-    lora_set_dio();
-    lora_set_freq();
+    lora_init();
 
     printf("Listening...\n");
 
