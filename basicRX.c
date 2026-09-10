@@ -60,8 +60,16 @@ void gpio_setup()
     spi_init(SPI_PORT, 16 * 1000000);
 }
 
+void lora_check_busy()
+{
+    while(gpio_get(LORA_BUSY)){
+        printf("Lora Busy\n");
+    }
+}
+
 void cs_low()
 {
+    lora_check_busy();
     gpio_put(LORA_CS, 0);
 }
 
@@ -122,8 +130,10 @@ void lora_set_rx()
 
 void lora_get_rx_status(uint8_t *pass) // takes a pointer to a 4 byte array, fills it with the length and offset of the last received packet
 {
+    uint8_t data = 0x13;
     cs_low();
-    spi_read_blocking(spi1, 0x13, pass, 4);
+    spi_write_blocking(spi1, &data, 1);
+    spi_read_blocking(spi1, 0x00, pass, 3);
     cs_high();
 }
 
@@ -215,7 +225,7 @@ void lora_set_packet_params()
         8, // preamble length LSB (set to 8 for now, can be changed later)
         0, //0 for explicit header, 1 for implicit header
         0xFF,
-        0, // CRC off
+        1, // CRC off
         0, // invert IQ off
         0,
         0,
@@ -255,25 +265,34 @@ int main(void)
 
     gpio_setup();
 
+
+    gpio_put(LORA_RESET, 0);
+    sleep_ms(5);          // Hold reset low for 5ms
+    gpio_put(LORA_RESET, 1); // Bring it back high
+    sleep_ms(10);
+
+
     sleep_ms(2000);
 
     uint8_t rx_status_reader[] =
         {
-            0x00, // dummy    0
-            0x00, // status   1
-            0x00, // length   2
-            0x00  // offset   3
+            0x00, // status   0
+            0x00, // length   1
+            0x00  // offset   2
         };
-
-    printf("\nSX1262 receiver\n");
-    printf("Frequency: 915 MHz\n");
 
     lora_init();
 
     printf("Listening...\n");
 
+    int loop = 0;
     while (1)
     {
+        loop++;
+        if(loop>10000000){
+            printf("Awaiting RX\n");
+            loop = 0;
+        }
         if (rx_done)
         {
             printf("RX_DONE interrupt received!\n");
@@ -281,9 +300,10 @@ int main(void)
             // find length
             lora_get_rx_status(rx_status_reader);
             // read packet
-            lora_read_packet(rx_status_reader[2], rx_status_reader[3]);
+            lora_read_packet(rx_status_reader[1], rx_status_reader[2]);
             // clear flags
             lora_clear_irq();
+            loop = 0;
         }
     }
 }
