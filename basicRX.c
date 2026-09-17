@@ -8,7 +8,7 @@
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 
-static const uint8_t LORA_FREQ[5] = {0x86, 0x39, 0x38, 0x00, 0x00};
+static const uint8_t LORA_FREQ[5] = {0x86, 0x34, 0x40, 0x00, 0x00};//{0x86, 0x39, 0x38, 0x00, 0x00};
 
 #define SPI_PORT spi1
 
@@ -46,6 +46,7 @@ void gpio_setup()
 
     gpio_init(LORA_BUSY);
     gpio_set_dir(LORA_BUSY, GPIO_IN);
+    gpio_pull_down(LORA_BUSY);
 
     gpio_init(LORA_DIO1);
     gpio_set_dir(LORA_DIO1, GPIO_IN);
@@ -70,12 +71,21 @@ void lora_check_busy()
 void cs_low()
 {
     lora_check_busy();
+    sleep_us(10);
     gpio_put(LORA_CS, 0);
 }
 
 void cs_high()
 {
     gpio_put(LORA_CS, 1);
+}
+
+void lora_set_standby()
+{
+    uint8_t data[] = { 0x80, 0x00 }; // 0x00 = STDBY_RC mode
+    cs_low();
+    spi_write_blocking(SPI_PORT, data, 2);
+    cs_high();
 }
 
 void lora_clear_irq()
@@ -100,7 +110,7 @@ uint8_t lora_read(uint8_t write)
 void lora_set_dio() // table 8-4, sets DIO1 to RX_DONE, DIO2 to none, DIO3 to none
 {
     uint8_t data[] = {
-        0x0D,             // SetDioIrqParams
+        0x08,             // SetDioIrqParams
         0x00, 0b00000010, // IRQ mask
         0x00, 0b00000010, // DIO1 mask
         0x00, 0x00,       // DIO2 mask
@@ -121,8 +131,11 @@ void lora_set_freq()
 
 void lora_set_rx()
 {
-    uint8_t data[] = {0x82, 0xFF, 0xFF, 0xFF}; // RX continuous
+    lora_set_standby();
+    sleep_ms(1);
 
+
+    uint8_t data[] = {0x82, 0xFF, 0xFF, 0xFF}; // RX continuous
     cs_low();
     spi_write_blocking(spi1, data, 4);
     cs_high();
@@ -156,6 +169,11 @@ void lora_read_packet(uint8_t length, uint8_t offset) // reads the last received
     for (uint8_t i = 0; i < length; i++)
     {
         printf("%02X ", data[i]);
+    }
+
+    for (uint8_t i = 0; i < length; i++)
+    {
+        printf("%c", data[i]);
     }
 
     printf("\n");
@@ -206,14 +224,10 @@ void lora_set_modulation_params(int sf, int bw, int cr, int ldro)
         sf,
         bw,
         cr,
-        ldro,
-        0,
-        0,
-        0,
-        0 
+        ldro 
     };
     cs_low();
-    spi_write_blocking(spi1, data, 9);
+    spi_write_blocking(spi1, data, 5);
     cs_high();
 }
 
@@ -225,36 +239,71 @@ void lora_set_packet_params()
         8, // preamble length LSB (set to 8 for now, can be changed later)
         0, //0 for explicit header, 1 for implicit header
         0xFF,
-        1, // CRC off
-        0, // invert IQ off
-        0,
-        0,
-        0
+        1, // CRC 0 off 1 on
+        0 // invert IQ off
     };
     cs_low();
-    spi_write_blocking(spi1, data, 10);
+    spi_write_blocking(spi1, data, 7);
     cs_high();
 }
 
+void lora_set_sync_word()
+{
+    uint8_t data[] = {
+        0x0D,
+        0x07,
+        0x40,
+        0x14,
+        0x24
+    };
+    cs_low();
+    spi_write_blocking(spi1, data, 5);
+    cs_high();
+}
+
+void lora_get_status()
+{
+                uint8_t status_cmd = 0xC0; // GetStatus command
+            uint8_t chip_status= 0;
+
+            cs_low();
+            spi_write_blocking(spi1, &status_cmd, 1);
+            spi_read_blocking(spi1, 0x00, &chip_status, 1); // Safe: matches array size
+            cs_high();
+            printf("%0b ", chip_status);
+            printf("\n");
+}
 
 void lora_init()
 {
     //setstdby Skipped since first boot
+    lora_set_standby();
+    lora_get_status();
     //setpackettype
     lora_set_packet_type(1); // LoRa
+    lora_get_status();
     //SetRfFrequency
     lora_set_freq();
+    lora_get_status();
     //setbufferBase
     lora_set_buffer_base(0x00, 0x00); // tx base 0, rx base 0
+    lora_get_status();
     //SetModulationParams
     lora_set_modulation_params(10, 6, 1, 0);
+    lora_get_status();
     //SetPacketParams
     lora_set_packet_params();
+    lora_get_status();
     //SetDIO
     lora_set_dio();
+    lora_get_status();
     //WriteReg set sync word? Skipped, already private
+    lora_set_sync_word();
+    lora_get_status();
     //SetRX
+    sleep_ms(100);
     lora_set_rx();
+    lora_get_status();
 }
 
 int main(void)
@@ -272,7 +321,7 @@ int main(void)
     sleep_ms(10);
 
 
-    sleep_ms(2000);
+    sleep_ms(5000);
 
     uint8_t rx_status_reader[] =
         {
@@ -289,8 +338,12 @@ int main(void)
     while (1)
     {
         loop++;
-        if(loop>10000000){
+        if(loop>16000000){
             printf("Awaiting RX\n");
+            printf("%d", gpio_get(LORA_DIO1));
+            printf("\n");
+            lora_get_status();
+            //lora_set_rx();
             loop = 0;
         }
         if (rx_done)
