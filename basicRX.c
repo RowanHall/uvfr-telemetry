@@ -3,6 +3,15 @@
 #include <stdint.h>
 #include <strings.h>
 
+
+//RacecaR1 password to pi debug wifi
+
+//Password to SSH: uvfr@10.1.0.154 (Ethernet) (PassWord) - have to config ethernet settings on pc side (ipv4 BS)
+//SSH uvfr@10.2.0.154 (wifi) (PassWord)
+
+//filepath in SSH: /home/uvfr/Documents/Remote LoRa/SimpleBroadcast/
+
+
 #include "pico/multicore.h" //hearbeat core
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
