@@ -29,6 +29,10 @@ static const uint8_t LORA_FREQ[5] = {0x86, 0x39, 0x38, 0x00, 0x00}; // 915.5 MHz
 #define LORA_CS 3
 #define LORA_BUSY 2
 
+// TCXO settings tried in order at boot until the radio actually enters RX (see 13.3.6)
+#define LORA_NO_TCXO 0xFF
+static const uint8_t TCXO_OPTIONS[] = {LORA_NO_TCXO, 0x02 /* 1.8V */, 0x07 /* 3.3V */};
+
 volatile bool rx_done = false;
 
 void dio1_callback(uint gpio, uint32_t events)
@@ -270,24 +274,87 @@ void lora_set_sync_word()
     cs_high();
 }
 
-void lora_get_status()
+uint8_t lora_get_status()
 {
-                uint8_t status_cmd = 0xC0; // GetStatus command
-            uint8_t chip_status= 0;
+    uint8_t status_cmd = 0xC0; // GetStatus command
+    uint8_t chip_status = 0;
 
-            cs_low();
-            spi_write_blocking(spi1, &status_cmd, 1);
-            spi_read_blocking(spi1, 0x00, &chip_status, 1); // Safe: matches array size
-            cs_high();
-            printf("%0b ", chip_status);
-            printf("\n");
+    cs_low();
+    spi_write_blocking(spi1, &status_cmd, 1);
+    spi_read_blocking(spi1, 0x00, &chip_status, 1);
+    cs_high();
+
+    // table 13-76: bits 6:4 chip mode, bits 3:1 command status
+    static const char *modes[] = {"?", "?", "STBY_RC", "STBY_XOSC", "FS", "RX", "TX", "?"};
+    static const char *cmds[] = {"ok", "?", "data available", "timeout", "processing error", "failed to execute", "tx done", "?"};
+    printf("Status 0x%02X: mode %s, last command %s\n",
+           chip_status, modes[(chip_status >> 4) & 7], cmds[(chip_status >> 1) & 7]);
+    return chip_status;
 }
 
-void lora_init()
+void lora_reset()
+{
+    gpio_put(LORA_RESET, 0);
+    sleep_ms(5);
+    gpio_put(LORA_RESET, 1);
+    sleep_ms(10);
+}
+
+void lora_set_tcxo(uint8_t voltage) // 13.3.6, must be sent in STDBY_RC before anything uses the oscillator
+{
+    uint8_t data[] = {
+        0x97, // SetDIO3AsTCXOCtrl
+        voltage,
+        0x00, 0x01, 0x40 // startup delay, 320 * 15.625us = 5ms
+    };
+    cs_low();
+    spi_write_blocking(spi1, data, 5);
+    cs_high();
+}
+
+void lora_calibrate() // 13.1.12, recalibrate after the clock source changes
+{
+    uint8_t data[] = {0x89, 0x7F}; // Calibrate all blocks
+    cs_low();
+    spi_write_blocking(spi1, data, 2);
+    cs_high();
+}
+
+void lora_clear_device_errors()
+{
+    uint8_t data[] = {0x07, 0x00, 0x00}; // ClearDeviceErrors
+    cs_low();
+    spi_write_blocking(spi1, data, 3);
+    cs_high();
+}
+
+void lora_get_device_errors() // 13.6.1
+{
+    uint8_t cmd = 0x17; // GetDeviceErrors
+    uint8_t rx[3] = {0}; // status, OpError MSB, OpError LSB
+    cs_low();
+    spi_write_blocking(spi1, &cmd, 1);
+    spi_read_blocking(spi1, 0x00, rx, 3);
+    cs_high();
+
+    uint16_t err = (rx[1] << 8) | rx[2];
+    printf("Device errors: 0x%04X\n", err);
+    if (err & (1 << 5)) printf("  XOSC_START_ERR (oscillator didn't start)\n");
+    if (err & (1 << 6)) printf("  PLL_LOCK_ERR\n");
+    if (err & (1 << 2)) printf("  PLL_CALIB_ERR\n");
+}
+
+bool lora_init(uint8_t tcxo) // returns true if the radio ends up listening
 {
     //setstdby Skipped since first boot
     lora_set_standby();
     lora_get_status();
+    lora_clear_device_errors();
+    if (tcxo != LORA_NO_TCXO)
+    {
+        lora_set_tcxo(tcxo);
+    }
+    lora_calibrate();
     //setpackettype
     lora_set_packet_type(1); // LoRa
     lora_get_status();
@@ -312,7 +379,9 @@ void lora_init()
     //SetRX
     sleep_ms(100);
     lora_set_rx();
-    lora_get_status();
+    sleep_ms(10);
+    lora_get_device_errors();
+    return ((lora_get_status() >> 4) & 7) == 5; // mode 5 = RX
 }
 
 int main(void)
@@ -324,13 +393,7 @@ int main(void)
     gpio_setup();
 
 
-    gpio_put(LORA_RESET, 0);
-    sleep_ms(5);          // Hold reset low for 5ms
-    gpio_put(LORA_RESET, 1); // Bring it back high
-    sleep_ms(10);
-
-
-    sleep_ms(5000);
+    sleep_ms(5000); // time to open the serial monitor
 
     uint8_t rx_status_reader[] =
         {
@@ -339,9 +402,22 @@ int main(void)
             0x00  // offset   2
         };
 
-    lora_init();
+    bool listening = false;
+    for (int i = 0; i < sizeof(TCXO_OPTIONS) && !listening; i++)
+    {
+        if (TCXO_OPTIONS[i] == LORA_NO_TCXO)
+            printf("\n--- Trying without TCXO ---\n");
+        else
+            printf("\n--- Trying TCXO setting 0x%02X ---\n", TCXO_OPTIONS[i]);
 
-    printf("Listening...\n");
+        lora_reset(); // clears any TCXO setting from the last attempt
+        listening = lora_init(TCXO_OPTIONS[i]);
+    }
+
+    if (listening)
+        printf("Listening...\n");
+    else
+        printf("ERROR: radio never entered RX with any TCXO setting, check module wiring/power\n");
 
     int loop = 0;
     while (1)
