@@ -1,10 +1,13 @@
 # uvfr-telemetry
 
-Wireless telemetry link for the **UVic Formula Racing (UVFR)** car (UV26, electric).
-A LoRa radio carries live data from the car to a trackside base station, which
-feeds a laptop dashboard. The Raspberry Pi in the car transmits; a Raspberry Pi
-Pico W at the base station receives and forwards each frame over USB serial; a
-Python reader on the laptop parses it into InfluxDB, and Grafana displays it.
+Wireless telemetry link for the UVFR car
+(mvp for UV26 but goal of UV27 and next step, make work for uv25).
+LoRa on pi carries live data from car to laptop with pico which
+feeds to influxDB+Grafana dashboard.
+
+The Pi transmits (TX) via lora
+Pico receives (RX) and forwards each frame over USB serial
+Python reader on laptop parses it into InfluxDB, and Grafana displays it.
 
 ```
   CAN bus          car-pi (RPi + SX1262)           base-pico (Pico W + SX1262)         laptop
@@ -60,6 +63,7 @@ table — change one, change the other.
 ## Quick start
 
 **1. Base station (Pico W receiver):**
+
 ```sh
 cd base-pico
 mkdir -p build && cd build
@@ -68,14 +72,17 @@ cmake .. && make          # produces build/Pico-Reciever.uf2
 ```
 
 **2. Car (Raspberry Pi transmitter):**
+
 ```sh
 cd car-pi
 make run                  # builds build/LoraPi and runs it (pigpio needs sudo)
 ```
+
 The car prints `Attempting broadcast (32 bytes)` → `TX done` ~10×/second; the base
 station prints `RX_DONE` and a `DATA,...` line per frame.
 
 **3. Laptop dashboard:**
+
 ```sh
 cd dashboard
 docker compose up -d      # InfluxDB + Grafana, dashboard auto-provisioned
@@ -86,7 +93,8 @@ python3 telemetry_reader.py --port /dev/cu.usbmodem1101 \
     --influx-url http://localhost:8086 --influx-token uvfr-dev-token-change-me \
     --influx-org uvfr --influx-bucket telemetry
 ```
-Open Grafana at http://localhost:3000 — the **UVFR Telemetry** dashboard fills in
+
+Open Grafana at <http://localhost:3000> — the **UVFR Telemetry** dashboard fills in
 live. Full setup (and the InfluxDB v2-vs-v3 gotcha) is in [`dashboard/README.md`](dashboard/README.md).
 
 > ⚠️ **Always attach a 915 MHz antenna before transmitting.** Running the SX1262
@@ -134,7 +142,3 @@ A wrong TCXO setting shows up as `XOSC_START_ERR` in the device errors.
   future migration to an STM32 (native CAN) or RP2040 (reuses the Pico LoRa code)
   keeps `protocol/telemetry.h` and the SX1262 command logic; only the SPI/CAN glue
   changes.
-
-> Note: UV26 CAN message maps, bitrates, and device protocol decode live in the
-> team's `docs-uv26/` (outside this repo) and are summarized in the project's
-> engineering notes. Consider vendoring the CAN-relevant docs + DBCs into the repo.
