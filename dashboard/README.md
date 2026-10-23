@@ -50,6 +50,30 @@ python3 telemetry_reader.py --port /dev/cu.usbmodem1101 \
 ```
 Frames should appear on the Grafana dashboard within a second or two.
 
+## Running on a headless base-station box
+Instead of the laptop, you can run the reader + InfluxDB + Grafana on a dedicated
+Linux machine in the room with the Pico (plug the Pico into its USB). You control
+it over SSH; you view the dashboards from a browser over the network — no desktop
+environment needed on the box.
+
+Setup on the box:
+```bash
+sudo usermod -aG dialout $USER          # serial access without sudo (re-login after)
+sudo apt install docker.io docker-compose-plugin
+# reader points at localhost since InfluxDB runs on the same box:
+python3 telemetry_reader.py --port /dev/ttyACM0 \
+    --influx-url http://localhost:8086 --influx-token uvfr-dev-token-change-me \
+    --influx-org uvfr --influx-bucket telemetry
+```
+
+View Grafana (`:3000`) from your own machine, pick one:
+- **LAN:** browse `http://<box-ip>:3000` (Grafana binds 0.0.0.0).
+- **SSH tunnel:** `ssh -L 3000:localhost:3000 -L 8086:localhost:8086 user@box`, then `http://localhost:3000`.
+- **Tailscale:** `http://<tailscale-ip>:3000` to reach it off-site.
+
+If you want full graphical control of the box (run a browser/IDE on it directly),
+install VNC / `xrdp` / NoMachine — optional and not needed just for the dashboard.
+
 ## Keeping the frame layout in sync
 `FIELDS` in `telemetry_reader.py` mirrors the channel block in
 `../protocol/telemetry.h`. If you change the struct there (and bump
