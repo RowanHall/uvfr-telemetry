@@ -1,7 +1,7 @@
 /*
-gcc LoraPi.c -o LoraPi -lpigpio
+make        (builds build/LoraPi)
 
-sudo ./LoraPi
+make run    (or: sudo ./build/LoraPi)
 */
 
 
