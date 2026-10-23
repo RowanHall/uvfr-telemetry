@@ -1,13 +1,22 @@
-build
-.vscode
-.env
-# pigpio source (install system-wide from here, don't track it)
-car-pi/pigpio-master/
-car-pi/master.zip
+# build output (Pi Makefile and Pico CMake both use build/)
+build/
+*.o
+*.elf
+*.uf2
+*.bin
 
-# compiled binaries
+# compiled Pi program, in case someone builds outside the Makefile
 car-pi/LoraPi
-car-pi/ClankerCode
-car-pi/Simplebroadcast
-car-pi/.env
-car-pi/build
+
+# downloaded library sources / archives (install system-wide, don't track)
+pigpio-master/
+*.zip
+
+# editor / OS files
+.vscode/
+.DS_Store
+*.swp
+*~
+
+# secrets (passwords, keys) - never commit these
+.env
