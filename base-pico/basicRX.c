@@ -8,9 +8,10 @@
 
 //Password to SSH: uvfr@10.1.0.154 (Ethernet) (PassWord) - have to config ethernet settings on pc side (ipv4 BS)
 //SSH uvfr@10.2.0.154 (wifi) (PassWord)
+//NEW SSH WITH TAILSCALE FROM ANYWHERE (machine must be added to account - message rowan039028 on Discord)
+//ssh uvfr@100.80.224.72 (message rowan039028 for passowrd)
 
-//filepath in SSH: /home/uvfr/Documents/Remote LoRa/SimpleBroadcast/
-
+//filepath in Pi /home/uvfr/Documents/uvfr-telemetry/car-pi
 
 #include "pico/multicore.h" //hearbeat core
 #include "pico/stdlib.h"

@@ -1,6 +1,6 @@
 build
 .vscode
-
+.env
 # pigpio source (install system-wide from here, don't track it)
 car-pi/pigpio-master/
 car-pi/master.zip
@@ -9,3 +9,5 @@ car-pi/master.zip
 car-pi/LoraPi
 car-pi/ClankerCode
 car-pi/Simplebroadcast
+car-pi/.env
+car-pi/build
