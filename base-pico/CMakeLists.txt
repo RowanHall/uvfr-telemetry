@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Pico-Reciever Pico-Reciever.c )
+add_executable(Pico-Reciever basicRX.c )
 
 pico_set_program_name(Pico-Reciever "Pico-Reciever")
 pico_set_program_version(Pico-Reciever "0.1")

@@ -1,2 +1,11 @@
 build
 .vscode
+
+# pigpio source (install system-wide from here, don't track it)
+car-pi/pigpio-master/
+car-pi/master.zip
+
+# compiled binaries
+car-pi/LoraPi
+car-pi/ClankerCode
+car-pi/Simplebroadcast

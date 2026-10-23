@@ -6,6 +6,7 @@ sudo ./LoraPi
 
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <pigpio.h>
@@ -20,7 +21,19 @@ sudo ./LoraPi
 #define LORA_RST 18
 #define LORA_SPI 0
 
-static uint8_t LORA_FREQ[5] = {0x86, 0x34, 0x40, 0x00, 0x00};//{0x86, 0x39, 0x38, 0x00, 0x00};
+// Set to 1 if the module uses a TCXO powered from DIO3 (most E22 / Core1262 style modules).
+// If GetDeviceErrors reports XOSC_START_ERR, flip this.
+#define LORA_USE_TCXO 0
+#define LORA_TCXO_VOLTAGE 0x02 // 0x02 = 1.8V (see 13.3.6)
+
+// Set to 1 if the module's antenna switch is driven by DIO2 (Waveshare Core1262 etc). Harmless if DIO2 is unconnected.
+#define LORA_DIO2_RF_SWITCH 0
+
+#define LORA_TX_TIMEOUT_US 2000000 // 2s, a short packet at SF10/500kHz takes ~50ms
+
+#define LORA_BUSY_TIMEOUT_US 100000 // 100ms, normal commands take a few us
+
+static uint8_t LORA_FREQ[5] = {0x86, 0x39, 0x38, 0x00, 0x00}; // 915.5 MHz (US 902-928 band)
 
 volatile int tx_status = 1;
 
@@ -37,8 +50,17 @@ void gpio_setup()
 
 void lora_check_busy()
 {
-    while(gpioRead(LORA_BUSY)){
-        printf("loraBusy\n");
+    uint32_t start = gpioTick();
+    while (gpioRead(LORA_BUSY))
+    {
+        if (gpioTick() - start > LORA_BUSY_TIMEOUT_US)
+        {
+            // the last function name printed is the command that never finished
+            printf("ERROR: BUSY stuck high for %dms, check wiring (CS/NSS on GPIO%d?) and TCXO setting\n",
+                   LORA_BUSY_TIMEOUT_US / 1000, LORA_CS);
+            gpioTerminate();
+            exit(1);
+        }
     }
 }
 
@@ -160,7 +182,7 @@ void lora_set_modulation_params(int sf, int bw, int cr, int ldro)
     cs_high();
 }
 
-void lora_set_packet_params()
+void lora_set_packet_params(uint8_t length)
 {
     printf("lora_set_packet_params\n");
     uint8_t data[] = {
@@ -168,7 +190,7 @@ void lora_set_packet_params()
         0, // preamble length MSB
         8, // preamble length LSB (set to 8 for now, can be changed later)
         0, //0 for explicit header, 1 for implicit header
-        0xFF,
+        length, // payload length
         1, // CRC 0 off 1 on
         0 // invert IQ off
     };
@@ -231,6 +253,81 @@ void lora_map_irq()
     cs_high();
 }
 
+void lora_set_tcxo() // 13.3.6, must be sent in STDBY_RC before anything uses the oscillator
+{
+    printf("lora_set_tcxo\n");
+    uint8_t data[] = {
+        0x97, // SetDIO3AsTCXOCtrl
+        LORA_TCXO_VOLTAGE,
+        0x00, 0x01, 0x40 // startup delay, 320 * 15.625us = 5ms
+    };
+    cs_low();
+    spiWrite(LORA_SPI, data, 5);
+    cs_high();
+}
+
+void lora_calibrate() // 13.1.12, recalibrate after the clock source changes
+{
+    printf("lora_calibrate\n");
+    uint8_t data[] = {
+        0x89, // Calibrate
+        0x7F  // all blocks
+    };
+    cs_low();
+    spiWrite(LORA_SPI, data, 2);
+    cs_high();
+}
+
+void lora_clear_device_errors()
+{
+    uint8_t data[] = {0x07, 0x00, 0x00}; // ClearDeviceErrors
+    cs_low();
+    spiWrite(LORA_SPI, data, 3);
+    cs_high();
+}
+
+void lora_get_device_errors() // 13.6.1
+{
+    char tx_buf[4] = {0x17, 0x00, 0x00, 0x00}; // GetDeviceErrors
+    char rx_buf[4] = {0};
+
+    cs_low();
+    spiXfer(LORA_SPI, tx_buf, rx_buf, 4);
+    cs_high();
+
+    uint16_t err = ((uint8_t)rx_buf[2] << 8) | (uint8_t)rx_buf[3];
+    printf("SX1262 Device errors: 0x%04X\n", err);
+    if (err & (1 << 0)) printf("  RC64K_CALIB_ERR\n");
+    if (err & (1 << 1)) printf("  RC13M_CALIB_ERR\n");
+    if (err & (1 << 2)) printf("  PLL_CALIB_ERR\n");
+    if (err & (1 << 3)) printf("  ADC_CALIB_ERR\n");
+    if (err & (1 << 4)) printf("  IMG_CALIB_ERR\n");
+    if (err & (1 << 5)) printf("  XOSC_START_ERR (try flipping LORA_USE_TCXO)\n");
+    if (err & (1 << 6)) printf("  PLL_LOCK_ERR\n");
+    if (err & (1 << 8)) printf("  PA_RAMP_ERR\n");
+}
+
+void lora_set_dio2_rf_switch() // 13.3.5
+{
+    printf("lora_set_dio2_rf_switch\n");
+    uint8_t data[] = {0x9D, 0x01}; // SetDIO2AsRfSwitchCtrl
+    cs_low();
+    spiWrite(LORA_SPI, data, 2);
+    cs_high();
+}
+
+uint16_t lora_get_irq_status() // 13.3.3
+{
+    char tx_buf[4] = {0x12, 0x00, 0x00, 0x00}; // GetIrqStatus
+    char rx_buf[4] = {0};
+
+    cs_low();
+    spiXfer(LORA_SPI, tx_buf, rx_buf, 4);
+    cs_high();
+
+    return ((uint8_t)rx_buf[2] << 8) | (uint8_t)rx_buf[3];
+}
+
 void lora_get_status()
 {
     // Use arrays of size 2
@@ -249,14 +346,24 @@ void lora_init()
 {
     printf("lora_init\n");
     lora_set_standby();
+    lora_clear_device_errors();
+#if LORA_USE_TCXO
+    lora_set_tcxo();
+#endif
+    lora_calibrate();
+    lora_get_device_errors();
+    lora_get_status();
     lora_set_pkt_type(1);
     lora_set_freq();
     lora_set_pa_config();
     lora_set_tx_params(3);
     lora_set_buffer_base(0x00, 0x00);
     lora_set_modulation_params(10, 6, 1, 0);
-    lora_set_packet_params();
+    lora_set_packet_params(0xFF);
     lora_map_irq();
+#if LORA_DIO2_RF_SWITCH
+    lora_set_dio2_rf_switch();
+#endif
     lora_set_sync_word();
 }
 /*
@@ -294,6 +401,7 @@ void lora_broadcast(char *words)
         printf("Error writing to buffer (too long)\n");
         return;
     }
+    lora_set_packet_params(strlen(words)); // only send the message, not the whole 255 byte buffer
 
     // 2. Clear any pending interrupts before starting TX
     lora_clear_irq();
@@ -301,11 +409,25 @@ void lora_broadcast(char *words)
     // 3. Put the radio into TX mode (this starts transmission of the buffer)
     lora_set_tx();
 
-    // 4. Wait for DIO1 to go high, indicating TxDone
+    // 4. Wait for TxDone, either on the DIO1 pin or by asking the chip over SPI
+    uint32_t start = gpioTick();
     while (!gpioRead(LORA_DIO1))
     {
-        // Optional short sleep or print, but busy-waiting works for simple scripts
-        usleep(1000); 
+        if (lora_get_irq_status() & 0x0001)
+        {
+            // DIO1 usually rises a moment later; only a wiring problem if this happens every time
+            printf("note: TxDone seen over SPI before DIO1 (GPIO%d) went high\n", LORA_DIO1);
+            break;
+        }
+        if (gpioTick() - start > LORA_TX_TIMEOUT_US)
+        {
+            printf("ERROR: TX never finished. IRQ flags: 0x%04X\n", lora_get_irq_status());
+            lora_get_status();
+            lora_get_device_errors();
+            printf("If status shows STBY_RC and errors are 0 the chip probably reset (power brownout?)\n");
+            return;
+        }
+        usleep(1000);
     }
 
     // 5. Clear the TxDone IRQ flag so the pin goes low again
@@ -326,6 +448,7 @@ int main()
     gpioDelay(5000); // 5ms
     gpioWrite(LORA_RST, 1);
     gpioDelay(10000); // 10ms
+    gpioWrite(LORA_CS, 1); // idle high so the chip doesn't see a half command
 
     sleep(1);
 

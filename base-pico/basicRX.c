@@ -17,7 +17,7 @@
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 
-static const uint8_t LORA_FREQ[5] = {0x86, 0x34, 0x40, 0x00, 0x00};//{0x86, 0x39, 0x38, 0x00, 0x00};
+static const uint8_t LORA_FREQ[5] = {0x86, 0x39, 0x38, 0x00, 0x00}; // 915.5 MHz, must match the Pi
 
 #define SPI_PORT spi1
 
@@ -47,7 +47,7 @@ void gpio_setup()
 
     gpio_init(LORA_CS);
     gpio_set_dir(LORA_CS, GPIO_OUT);
-    gpio_put(LORA_CS, 0);
+    gpio_put(LORA_CS, 1); // idle high, low here makes the radio see a half command
 
     gpio_init(LORA_RESET);
     gpio_set_dir(LORA_RESET, GPIO_OUT);
