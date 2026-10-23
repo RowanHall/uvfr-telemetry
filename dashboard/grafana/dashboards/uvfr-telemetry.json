@@ -1,0 +1,123 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["uvfr", "telemetry"],
+  "time": { "from": "now-1m", "to": "now" },
+  "refresh": "500ms",
+  "templating": { "list": [] },
+  "title": "UVFR Telemetry",
+  "uid": "uvfr-telemetry",
+  "version": 1,
+  "panels": [
+    {
+      "type": "gauge",
+      "title": "State of Charge",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "yellow", "value": 20 },
+            { "color": "green", "value": 40 }
+          ] }
+        }
+      },
+      "targets": [ { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"soc\")\n  |> last()" } ]
+    },
+    {
+      "type": "stat",
+      "title": "Pack Voltage",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "volt", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } } },
+      "targets": [ { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"pack_voltage\")\n  |> last()" } ]
+    },
+    {
+      "type": "stat",
+      "title": "Pack Current",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "amp", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 100 } ] } } },
+      "targets": [ { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"pack_current\")\n  |> last()" } ]
+    },
+    {
+      "type": "stat",
+      "title": "Speed",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "velocitykmh", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } } },
+      "targets": [ { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"speed\")\n  |> last()" } ]
+    },
+    {
+      "type": "gauge",
+      "title": "Motor Temp",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "celsius", "min": 0, "max": 120, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 80 }, { "color": "red", "value": 100 } ] } } },
+      "targets": [ { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"motor_temp\")\n  |> last()" } ]
+    },
+    {
+      "type": "gauge",
+      "title": "Inverter Temp",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "celsius", "min": 0, "max": 120, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 90 } ] } } },
+      "targets": [ { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"inverter_temp\")\n  |> last()" } ]
+    },
+    {
+      "type": "gauge",
+      "title": "Max Cell Temp",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "celsius", "min": 0, "max": 80, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 45 }, { "color": "red", "value": 60 } ] } } },
+      "targets": [ { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"cell_temp_max\")\n  |> last()" } ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Throttle / Brake",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } } },
+      "options": { "orientation": "horizontal", "displayMode": "gradient" },
+      "targets": [
+        { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"throttle\")\n  |> last()" },
+        { "refId": "B", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"brake\")\n  |> last()" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Motor RPM",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "rotrpm", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 } } },
+      "targets": [ { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"motor_rpm\")" } ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Pack Voltage & Current",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 } } },
+      "targets": [
+        { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"pack_voltage\")" },
+        { "refId": "B", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"pack_current\")" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Temperatures",
+      "datasource": { "type": "influxdb", "uid": "uvfr-influx" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "celsius", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } } },
+      "targets": [
+        { "refId": "A", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"motor_temp\")" },
+        { "refId": "B", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"inverter_temp\")" },
+        { "refId": "C", "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"telemetry\" and r._field == \"cell_temp_max\")" }
+      ]
+    }
+  ]
+}

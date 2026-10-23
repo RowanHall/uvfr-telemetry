@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    uid: uvfr-influx          # the dashboard panels reference this uid
+    access: proxy
+    url: http://influxdb:8086 # service name from docker-compose
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: uvfr
+      defaultBucket: telemetry
+    secureJsonData:
+      token: uvfr-dev-token-change-me

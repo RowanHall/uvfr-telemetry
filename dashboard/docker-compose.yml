@@ -1,0 +1,47 @@
+# UVFR telemetry dashboard stack.
+#   docker compose up -d
+# Brings up InfluxDB 2.x (pre-initialized) + Grafana (datasource + dashboard
+# auto-provisioned). Then run telemetry_reader.py pointed at :8086.
+#
+# NOTE: the token below is a throwaway for local/dev use. Change it (here, in
+# the grafana datasource, and in your reader command) before anything leaves
+# your laptop.
+
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: uvfr-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: uvfr
+      DOCKER_INFLUXDB_INIT_PASSWORD: uvfrpassword
+      DOCKER_INFLUXDB_INIT_ORG: uvfr
+      DOCKER_INFLUXDB_INIT_BUCKET: telemetry
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: uvfr-dev-token-change-me
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: uvfr-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"   # pit crew can view without logging in
+      GF_DASHBOARDS_MIN_REFRESH_INTERVAL: "500ms"  # allow sub-5s refresh (default floor is 5s)
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - influxdb
+
+volumes:
+  influxdb-data:
+  influxdb-config:
+  grafana-data:
