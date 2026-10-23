@@ -17,6 +17,7 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
+#include "../protocol/telemetry.h" // shared wire protocol (telem_frame_t, CRC)
 
 static const uint8_t LORA_FREQ[5] = {0x86, 0x39, 0x38, 0x00, 0x00}; // 915.5 MHz, must match the Pi
 
@@ -164,7 +165,12 @@ void lora_get_rx_status(uint8_t *pass) // takes a pointer to a 4 byte array, fil
     cs_high();
 }
 
-void lora_read_packet(uint8_t length, uint8_t offset) // reads the last received packet, returns it as a string
+// Reads the last received packet and, if it is a valid telem_frame_t, emits a
+// machine-readable CSV line for the laptop dashboard reader (step C). Lines are
+// prefixed "DATA," so the Python reader can ignore heartbeat/debug chatter.
+// CSV column order (matches the printf below):
+//   DATA,seq,ms,packV,packI,soc,cellTmax,cellVmin,rpm,motT,invT,torque,thr,brk,speed,flags
+void lora_read_packet(uint8_t length, uint8_t offset)
 {
     uint8_t ask[3];
     ask[0] = 0x1E; // ReadBuffer command
@@ -178,19 +184,38 @@ void lora_read_packet(uint8_t length, uint8_t offset) // reads the last received
     spi_read_blocking(spi1, 0x00, data, length);
     cs_high();
 
-    printf("Received %u bytes: ", length);
-
-    for (uint8_t i = 0; i < length; i++)
+    if (length != sizeof(telem_frame_t))
     {
-        printf("%02X ", data[i]);
+        printf("RX %u bytes, not a telem frame (expected %u)\n",
+               length, (unsigned)sizeof(telem_frame_t));
+        return;
     }
 
-    for (uint8_t i = 0; i < length; i++)
+    telem_frame_t *f = (telem_frame_t *)data;
+    if (!telem_valid(f))
     {
-        printf("%c", data[i]);
+        printf("RX telem frame FAILED validation (version/CRC) - corrupt or wrong protocol version\n");
+        return;
     }
 
-    printf("\n");
+    // Packet-loss tracking via the sequence number.
+    static bool have_last = false;
+    static uint16_t last_seq = 0;
+    if (have_last)
+    {
+        uint16_t gap = (uint16_t)(f->seq - last_seq - 1);
+        if (gap)
+            printf("WARN: %u dropped frame(s) before seq %u\n", gap, f->seq);
+    }
+    last_seq = f->seq;
+    have_last = true;
+
+    printf("DATA,%u,%lu,%u,%d,%u,%d,%u,%d,%d,%d,%d,%u,%u,%u,%u\n",
+           f->seq, (unsigned long)f->timestamp_ms,
+           f->pack_voltage, f->pack_current, f->soc_pct,
+           f->cell_temp_max, f->cell_volt_min,
+           f->motor_rpm, f->motor_temp, f->inverter_temp, f->torque_actual,
+           f->throttle_pct, f->brake_pct, f->speed, f->flags);
 }
 
 void heartbeat_core(void)

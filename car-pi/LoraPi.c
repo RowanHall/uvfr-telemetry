@@ -10,6 +10,7 @@ make run    (or: sudo ./build/LoraPi)
 #include <string.h>
 #include <unistd.h>
 #include <pigpio.h>
+#include "../protocol/telemetry.h"
 
 #define LORA_CS 21
 #define LORA_CLK 11
@@ -199,20 +200,18 @@ void lora_set_packet_params(uint8_t length)
     cs_high();
 }
 
-int lora_write_buffer(char *words)
+// Write `len` raw bytes into the SX1262 FIFO at offset 0. Binary-safe: unlike
+// the old strlen-based version, this handles payloads that contain zero bytes
+// (a packed struct almost always does), so it must be given an explicit length.
+int lora_write_buffer(const uint8_t *buf, uint8_t len)
 {
-    printf("lora_write_buffer\n");
-    int length = strlen(words);
-    if (length > 255)
-    {
-        return length;
-    }
-    uint8_t data[] = {
-        0x0E,
-        0x00};
+    printf("lora_write_buffer (%u bytes)\n", len);
+    uint8_t cmd[] = {
+        0x0E, // WriteBuffer
+        0x00}; // offset 0
     cs_low();
-    spiWrite(LORA_SPI, data, 2);
-    spiWrite(LORA_SPI, words, length);
+    spiWrite(LORA_SPI, (char *)cmd, 2);
+    spiWrite(LORA_SPI, (char *)buf, len);
     cs_high();
     return 0;
 }
@@ -366,42 +365,13 @@ void lora_init()
 #endif
     lora_set_sync_word();
 }
-/*
-void lora_broadcast(char *words)
+void lora_broadcast(const uint8_t *buf, uint8_t len)
 {
-    printf("attempting broadcast\n");
-    // what do here? set tx? write buffer? need to read pdf again
-    if (!tx_status) //check tx status, if its not done, loop until TX IRQ trips
-    {
-        while (!gpioRead(LORA_DIO1))
-        {
-            printf("TX NOT DONE.\n");
-        }
-        lora_clear_irq();
-        tx_status = 1;
-    }
-    printf("TX done\n");
-    if(lora_write_buffer(words))
-    {
-        printf("error writing to buffer\n");
-        return;
-    }
-    lora_set_tx();
-    tx_status = 0;
-}
-*/
-
-void lora_broadcast(char *words)
-{
-    printf("Attempting broadcast\n");
+    printf("Attempting broadcast (%u bytes)\n", len);
     lora_get_status();
     // 1. Write the payload to the FIFO buffer FIRST
-    if (lora_write_buffer(words))
-    {
-        printf("Error writing to buffer (too long)\n");
-        return;
-    }
-    lora_set_packet_params(strlen(words)); // only send the message, not the whole 255 byte buffer
+    lora_write_buffer(buf, len);
+    lora_set_packet_params(len); // send exactly len bytes, not the whole 255 byte buffer
 
     // 2. Clear any pending interrupts before starting TX
     lora_clear_irq();
@@ -440,7 +410,6 @@ void lora_broadcast(char *words)
 
 int main()
 {
-    char send[] = "Testing Testing 123";
     gpio_setup();
 
 
@@ -455,9 +424,38 @@ int main()
     lora_init();
 
     sleep(1);
+
+    // STEP B: send a real telem_frame_t with SYNTHETIC values so the whole
+    // pipeline (frame -> LoRa -> Pico -> laptop -> Grafana) can be built and
+    // watched before any CAN data exists. Step D replaces these with SocketCAN
+    // reads; nothing else in the pipeline has to change.
+    telem_frame_t frame = {0};
+    frame.type = TELEM_TYPE_DATA;
+    uint16_t seq = 0;
+
     while (1)
     {
-        lora_broadcast(send);
+        // Sweep each channel through its range so the dashboard shows movement.
+        frame.seq = seq;
+        frame.timestamp_ms = gpioTick() / 1000u; // pigpio tick is microseconds
+        frame.pack_voltage  = 3000 + (seq % 1000);            // 300.0-400.0 V (x10)
+        frame.pack_current  = (int16_t)((seq * 7) % 2000) - 500; // -50.0..+150.0 A (x10)
+        frame.soc_pct       = 50 + (seq % 50);                // 50-99 %
+        frame.cell_temp_max = 250 + (seq % 400);              // 25.0-65.0 C (x10)
+        frame.cell_volt_min = 3200 + (seq % 900);             // 3200-4100 mV
+        frame.motor_rpm     = (int16_t)((seq * 37) % 6000);   // 0-6000 rpm
+        frame.motor_temp    = 300 + (seq % 500);              // 30.0-80.0 C (x10)
+        frame.inverter_temp = 350 + (seq % 300);              // 35.0-65.0 C (x10)
+        frame.torque_actual = (int16_t)((seq * 3) % 1500);    // 0-150.0 Nm (x10)
+        frame.throttle_pct  = seq % 101;                      // 0-100 %
+        frame.brake_pct     = (seq * 2) % 101;                // 0-100 %
+        frame.speed         = (seq * 5) % 1200;               // 0-120.0 km/h (x10)
+        frame.flags         = 0;
+
+        telem_finalize(&frame); // stamps version + CRC
+        lora_broadcast((const uint8_t *)&frame, sizeof(frame));
+
+        seq++;
         sleep(1);
     }
 }
