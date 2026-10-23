@@ -456,7 +456,7 @@ int main()
         lora_broadcast((const uint8_t *)&frame, sizeof(frame));
 
         seq++;
-        sleep(1);
+        usleep(100000); // 10 Hz (~40-50% airtime at SF10/BW500/CR4-5)
     }
 }
 

@@ -1,0 +1,2 @@
+pyserial>=3.5
+influxdb-client>=1.40   # only needed for the InfluxDB sink (not for --stdout)
