@@ -10,11 +10,6 @@ Pico receives (RX) and forwards each frame over USB serial
 Python reader on laptop parses it into InfluxDB, and Grafana displays it.
 
 ```
-  CAN bus          car-pi (RPi + SX1262)           base-pico (Pico W + SX1262)         laptop
- (UV26, EV)  ─►  LoraPi.c ─ TX ─►  ((( 915.5 MHz LoRa )))  ─►  basicRX.c ─ USB serial ─►  telemetry_reader.py
-  [step D]         packs a                                       validates CRC/seq,          │
-                   telem_frame_t                                 prints "DATA," CSV          ▼
-                                                                                        InfluxDB ─► Grafana
 ```
 
 Both radio ends use a **Semtech SX1262** driven over SPI. The link is one-way
