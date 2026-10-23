@@ -1,64 +1,104 @@
 # uvfr-telemetry
 
-Wireless telemetry link for the **UVic Formula Racing (UVFR)** car. A LoRa radio
-carries data from the car to a base station at trackside: the Raspberry Pi in the
-car transmits, and a Raspberry Pi Pico W at the base station receives and prints
-each packet over USB serial to a laptop.
+Wireless telemetry link for the **UVic Formula Racing (UVFR)** car (UV26, electric).
+A LoRa radio carries live data from the car to a trackside base station, which
+feeds a laptop dashboard. The Raspberry Pi in the car transmits; a Raspberry Pi
+Pico W at the base station receives and forwards each frame over USB serial; a
+Python reader on the laptop parses it into InfluxDB, and Grafana displays it.
 
 ```
-  car-pi (Raspberry Pi 3B+ + SX1262)              base-pico (Pico W + SX1262)
-    LoraPi.c  ── TX ──►  ((( 915.5 MHz LoRa )))  ──► basicRX.c  ── USB serial ──► laptop
+  CAN bus          car-pi (RPi + SX1262)           base-pico (Pico W + SX1262)         laptop
+ (UV26, EV)  ─►  LoraPi.c ─ TX ─►  ((( 915.5 MHz LoRa )))  ─►  basicRX.c ─ USB serial ─►  telemetry_reader.py
+  [step D]         packs a                                       validates CRC/seq,          │
+                   telem_frame_t                                 prints "DATA," CSV          ▼
+                                                                                        InfluxDB ─► Grafana
 ```
 
-Both ends use a **Semtech SX1262** radio driven over SPI. The link is one-way
-(car → base) and currently sends a fixed test string; real telemetry gets dropped
-in where that string is built. **The two ends must agree on every radio parameter**
-(frequency, modulation, sync word, CRC) or nothing is received — see
+Both radio ends use a **Semtech SX1262** driven over SPI. The link is one-way
+(car → base). **The two ends must agree on every radio parameter** (frequency,
+modulation, sync word, CRC) or nothing is received — see
 [Radio link parameters](#radio-link-parameters-must-match).
+
+## Status
+
+The full pipeline works end-to-end **with synthetic data**: the car transmits a
+real telemetry frame at 10 Hz, the base station validates and forwards it, and the
+laptop dashboard shows live gauges and graphs. The remaining piece is **step D** —
+replacing the synthetic values with real CAN-bus reads on the car. See
+[Roadmap](#roadmap).
 
 ## Repository layout
 
 | Path | What it is |
 |------|------------|
-| [`car-pi/`](car-pi/) | **Transmitter.** C program for the Raspberry Pi in the car, using the [pigpio](https://github.com/joan2937/pigpio) library. Builds with `make`. See [`car-pi/README.md`](car-pi/README.md). |
-| [`base-pico/`](base-pico/) | **Receiver.** Firmware for a Raspberry Pi Pico W, built with the Pico SDK (CMake). Listens continuously and prints packets over USB serial. See [`base-pico/README.md`](base-pico/README.md). |
-| [`protocol/`](protocol/) | Reserved for a shared packet/telemetry format definition (empty for now). |
+| [`car-pi/`](car-pi/) | **Transmitter.** C program for the Raspberry Pi in the car, using [pigpio](https://github.com/joan2937/pigpio). Builds `telem_frame_t`s and sends them over the SX1262 at 10 Hz. Builds with `make`. See [`car-pi/README.md`](car-pi/README.md). |
+| [`base-pico/`](base-pico/) | **Receiver.** Pico W firmware (Pico SDK / CMake). Listens continuously, validates each frame (version + CRC), tracks dropped packets by sequence number, and prints a `DATA,` CSV line over USB serial. See [`base-pico/README.md`](base-pico/README.md). |
+| [`protocol/`](protocol/) | [`telemetry.h`](protocol/telemetry.h) — the **shared wire protocol**. One packed `telem_frame_t` struct included by *both* radio ends (and mirrored by the laptop reader), plus the radio config and a CRC-16. Single source of truth for the frame layout. |
+| [`dashboard/`](dashboard/) | **Laptop side.** `telemetry_reader.py` (pyserial → InfluxDB) and a Docker Compose stack that auto-provisions InfluxDB + Grafana with a prebuilt dashboard. See [`dashboard/README.md`](dashboard/README.md). |
 | [`docs/`](docs/) | Reference material — the [SX1261/2 datasheet](docs/DS_SX1261-2_V1.2.pdf). Section numbers in code comments (e.g. `13.3.6`) refer to it. |
 | [`tools/`](tools/) | Supporting config, e.g. an OpenOCD SWD file for debugging the Pico. |
 
 Each end has its own README with the full wiring table, build steps, expected
-output, and troubleshooting. Start there once you know which board you're working
-on. This file is the map; those are the manuals.
+output, and troubleshooting. This file is the map; those are the manuals.
+
+## The telemetry frame
+
+`protocol/telemetry.h` defines a single packed 32-byte `telem_frame_t`:
+
+- **Header:** `version` (guards against layout drift — bump `TELEM_VERSION` on any
+  change), `type`, `seq` (for drop detection), `timestamp_ms`.
+- **Channels:** EV data as scaled integers (no floats): pack voltage/current, SoC,
+  cell temp/voltage, motor rpm/temp, inverter temp, torque, throttle, brake, speed,
+  flags. Each field's unit and scale is in the header comment.
+- **Integrity:** trailing CRC-16/CCITT; `telem_finalize()` stamps it, `telem_valid()`
+  checks it.
+
+Because the header is portable C, it compiles unchanged on the Pi, the Pico, and
+(for a future car-side MCU) an STM32. The laptop reader keeps a matching field
+table — change one, change the other.
 
 ## Quick start
 
-**Base station (Pico W receiver):**
-
+**1. Base station (Pico W receiver):**
 ```sh
 cd base-pico
 mkdir -p build && cd build
 cmake .. && make          # produces build/Pico-Reciever.uf2
 # hold BOOTSEL, plug in the Pico, copy the .uf2 onto RPI-RP2
-screen /dev/tty.usbmodem* 115200   # watch output (macOS; Linux: /dev/ttyACM0)
 ```
 
-**Car (Raspberry Pi transmitter):**
-
+**2. Car (Raspberry Pi transmitter):**
 ```sh
 cd car-pi
 make run                  # builds build/LoraPi and runs it (pigpio needs sudo)
 ```
+The car prints `Attempting broadcast (32 bytes)` → `TX done` ~10×/second; the base
+station prints `RX_DONE` and a `DATA,...` line per frame.
 
-A healthy link prints `Attempting broadcast` → `TX done` on the car once a second,
-and `RX_DONE` / `Received N bytes: ...` on the base station.
+**3. Laptop dashboard:**
+```sh
+cd dashboard
+docker compose up -d      # InfluxDB + Grafana, dashboard auto-provisioned
+# confirm frames parse (no DB needed):
+python3 telemetry_reader.py --port /dev/cu.usbmodem1101 --stdout
+# then stream into InfluxDB:
+python3 telemetry_reader.py --port /dev/cu.usbmodem1101 \
+    --influx-url http://localhost:8086 --influx-token uvfr-dev-token-change-me \
+    --influx-org uvfr --influx-bucket telemetry
+```
+Open Grafana at http://localhost:3000 — the **UVFR Telemetry** dashboard fills in
+live. Full setup (and the InfluxDB v2-vs-v3 gotcha) is in [`dashboard/README.md`](dashboard/README.md).
 
 > ⚠️ **Always attach a 915 MHz antenna before transmitting.** Running the SX1262
 > power amplifier without an antenna can damage the radio.
+>
+> Only one program can own the serial port at a time — close any serial monitor
+> before running the reader.
 
 ## Radio link parameters (must match)
 
-Set identically in `car-pi/LoraPi.c` and `base-pico/basicRX.c`. If the heartbeat
-runs but no packets arrive, these are the first thing to check.
+Centralized in `protocol/telemetry.h` and set identically in `car-pi/LoraPi.c` and
+`base-pico/basicRX.c`. If the heartbeat runs but no packets arrive, check these first.
 
 | Parameter | Value |
 |-----------|-------|
@@ -72,14 +112,29 @@ runs but no packets arrive, these are the first thing to check.
 | Sync word | `0x1424` (private network) |
 | TX power | +22 dBm, 80 µs ramp |
 
-One asymmetry worth knowing: the two SX1262 modules differ in their clock source.
-The car's module uses a plain crystal (`LORA_USE_TCXO 0`); the base station's
-firmware auto-probes `{ none, 1.8 V, 3.3 V }` TCXO options at boot and keeps the
-first that brings the radio into RX. A wrong TCXO setting shows up as
-`XOSC_START_ERR` in the device errors.
+At SF10/BW500 a 32-byte frame is ~40–50 ms on air, so 10 Hz sits around 40–50%
+airtime — comfortable. Going much faster needs a lower spreading factor (trading
+range for speed).
 
-## Status
+One asymmetry worth knowing: the two SX1262 modules differ in clock source. The
+car's module uses a plain crystal (`LORA_USE_TCXO 0`); the base station auto-probes
+`{ none, 1.8 V, 3.3 V }` TCXO options at boot and keeps the first that reaches RX.
+A wrong TCXO setting shows up as `XOSC_START_ERR` in the device errors.
 
-Working end-to-end over the air with a fixed test payload. Next steps: define a
-real telemetry packet format (the `protocol/` folder is the home for it) and feed
-live car data into the transmitter.
+## Roadmap
+
+- **Step D — real CAN data (next, needs the car).** UV26 is an EV with two CAN
+  buses (CAN1 powertrain @ 500 k, CAN2 sensors @ 250 k). On the Pi, bring up
+  SocketCAN (`can0`) via the Waveshare RS485 CAN HAT, then replace the synthetic
+  values in `LoraPi.c` with decoded CAN signals — starting with the Energy Meter
+  (`0x100`) and Bamocar inverter (`0x181`). The rest of the pipeline is unchanged.
+- **Full-rate logging** — the radio link is a lossy subset; the complete record
+  should be logged on the car (SD card, or the existing DAQ system).
+- **Car-side MCU** — the Pi is ideal for prototyping but heavy for the car. A
+  future migration to an STM32 (native CAN) or RP2040 (reuses the Pico LoRa code)
+  keeps `protocol/telemetry.h` and the SX1262 command logic; only the SPI/CAN glue
+  changes.
+
+> Note: UV26 CAN message maps, bitrates, and device protocol decode live in the
+> team's `docs-uv26/` (outside this repo) and are summarized in the project's
+> engineering notes. Consider vendoring the CAN-relevant docs + DBCs into the repo.

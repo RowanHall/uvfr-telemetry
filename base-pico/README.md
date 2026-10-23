@@ -2,8 +2,9 @@
 
 Firmware for a **Raspberry Pi Pico W** driving a **Semtech SX1262** LoRa radio. It is
 the *base station* / receiver half of the UVFR telemetry link: it listens
-continuously for packets transmitted by the car-side radio and prints each one
-over USB serial.
+continuously for frames transmitted by the car-side radio, validates each one, and
+prints it as a CSV line over USB serial for the laptop reader
+([`../dashboard`](../dashboard)).
 
 ```
   car-pi (Raspberry Pi + SX1262)                base-pico (Pico W + SX1262)
@@ -77,9 +78,13 @@ If none work it prints a wiring/power error.
 **Receive loop** — after setup the radio sits in RX-continuous mode
 (`lora_set_rx()` → `0x82 FFFFFF`). The main `while(1)` loop:
 - Polls the `rx_done` flag set by the DIO1 interrupt. On a packet it calls
-  `lora_get_rx_status()` to read the payload length + buffer offset,
-  `lora_read_packet()` to read the FIFO (printed as both hex and ASCII), then
-  `lora_clear_irq()` to re-arm.
+  `lora_get_rx_status()` for the payload length + buffer offset and
+  `lora_read_packet()` to read the FIFO, then `lora_clear_irq()` to re-arm.
+- `lora_read_packet()` interprets the payload as a `telem_frame_t`
+  ([`../protocol/telemetry.h`](../protocol/telemetry.h)): it checks the length,
+  validates version + CRC, tracks the sequence number to warn on dropped frames,
+  and prints a `DATA,` CSV line. Payloads that aren't valid frames are reported and
+  skipped.
 - Every ~16M idle iterations it prints `Awaiting RX`, the DIO1 pin level, and a
   decoded status line as a liveness/diagnostic check.
 
@@ -129,8 +134,14 @@ Expected on a healthy link:
 Status 0x2A: mode RX, last command data available
 Listening...
 RX_DONE interrupt received!
-Received 19 bytes: 54 65 73 74 ... Testing Testing 123
+DATA,430,2158902,3430,510,80,280,3630,3910,730,480,1290,26,52,950,0
 ```
+
+Each `DATA,` line is one validated frame. Columns:
+`seq, device_ms, packV, packI, soc, cellTmax, cellVmin, rpm, motT, invT, torque,
+thr, brk, speed, flags` — raw integers; the laptop reader applies the scale
+factors from `telemetry.h`. Dropped frames print `WARN: N dropped frame(s)...`;
+corrupt or foreign payloads print a validation-failure note.
 
 ## Troubleshooting
 

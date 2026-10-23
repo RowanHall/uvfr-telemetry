@@ -1,11 +1,13 @@
 # car-pi — LoRa transmitter
 
 Runs on the Raspberry Pi in the car. Drives an SX1262 LoRa radio over SPI and
-broadcasts a message once a second for the base station Pico
+transmits a telemetry frame at 10 Hz for the base station Pico
 ([`../base-pico`](../base-pico)) to receive.
 
-Right now it sends the test string `Testing Testing 123`; swap in real telemetry
-in `main()` in `LoraPi.c`.
+The payload is the shared `telem_frame_t` from
+[`../protocol/telemetry.h`](../protocol/telemetry.h). `main()` in `LoraPi.c`
+currently fills it with synthetic sweeping values; step D replaces those with real
+CAN reads (see the top-level README).
 
 ## Hardware
 
@@ -66,15 +68,14 @@ lora_init
 lora_set_standby
 lora_calibrate
 ...
-Attempting broadcast
-lora_write_buffer
+Attempting broadcast (32 bytes)
+lora_write_buffer (32 bytes)
 lora_set_packet_params
-lora_clear_irq
 lora_set_tx
 TX done
 ```
 
-`Attempting broadcast` → `TX done` repeats every second.
+`Attempting broadcast (32 bytes)` → `TX done` repeats ~10×/second.
 
 ## Settings
 
